@@ -1,27 +1,32 @@
 use crate::{
+    // 导入账户公私钥类型
     acc::{AccPublicKey, AccSecretKey},
+    // 导入区块链相关类型
     chain::{block::Height, object::Object, query::query_param::QueryParam, traits::Num},
 };
 use anyhow::{ensure, Context, Error, Result};
 use howlong::ProcessDuration;
-use memmap2::Mmap;
-use rand::{CryptoRng, RngCore};
-use serde::{Deserialize, Serialize};
-use snap::{read::FrameDecoder, write::FrameEncoder};
+use memmap2::Mmap; // 内存映射文件库
+use rand::{CryptoRng, RngCore}; // 随机数生成库
+use serde::{Deserialize, Serialize}; // 序列化/反序列化库
+use snap::{read::FrameDecoder, write::FrameEncoder}; // 压缩库
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashSet}, // 集合类型
     error::Error as StdError,
-    fs,
+    fs, // 文件系统操作
     fs::File,
-    io::{prelude::*, BufReader},
-    path::{Path, PathBuf},
-    str::FromStr,
+    io::{prelude::*, BufReader}, // IO操作
+    path::{Path, PathBuf}, // 路径操作
+    str::FromStr, // 字符串转换
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::EnvFilter; // 日志追踪过滤器
 
+/// 宏：创建基于u32类型的ID结构体
+/// 该宏会自动生成具有原子递增功能的ID类型
 #[macro_export]
 macro_rules! create_id_type_by_u32 {
     ($name: ident) => {
+        /// 自动实现多个trait，包括序列化、显示等
         #[derive(
             Debug,
             Default,
@@ -34,15 +39,16 @@ macro_rules! create_id_type_by_u32 {
             Hash,
             serde::Serialize,
             serde::Deserialize,
-            derive_more::Deref,
-            derive_more::DerefMut,
-            derive_more::Display,
-            derive_more::From,
-            derive_more::Into,
+            derive_more::Deref,      // 解引用
+            derive_more::DerefMut,   // 可变解引用
+            derive_more::Display,    // 显示
+            derive_more::From,       // From trait
+            derive_more::Into,       // Into trait
         )]
         pub struct $name(pub u32);
 
         impl $name {
+            /// 获取下一个ID值（线程安全）
             pub fn next_id() -> Self {
                 use core::sync::atomic::{AtomicU32, Ordering};
                 static ID_CNT: AtomicU32 = AtomicU32::new(0);
@@ -52,9 +58,12 @@ macro_rules! create_id_type_by_u32 {
     };
 }
 
+/// 宏：创建基于u16类型的ID结构体
+/// 该宏会自动生成具有原子递增功能的ID类型
 #[macro_export]
 macro_rules! create_id_type_by_u16 {
     ($name: ident) => {
+        /// 自动实现多个trait，包括序列化、显示等
         #[derive(
             Debug,
             Default,
@@ -67,15 +76,16 @@ macro_rules! create_id_type_by_u16 {
             Hash,
             serde::Serialize,
             serde::Deserialize,
-            derive_more::Deref,
-            derive_more::DerefMut,
-            derive_more::Display,
-            derive_more::From,
-            derive_more::Into,
+            derive_more::Deref,      // 解引用
+            derive_more::DerefMut,   // 可变解引用
+            derive_more::Display,    // 显示
+            derive_more::From,       // From trait
+            derive_more::Into,       // Into trait
         )]
         pub struct $name(pub u16);
 
         impl $name {
+            /// 获取下一个ID值（线程安全）
             pub fn next_id() -> Self {
                 use core::sync::atomic::{AtomicU16, Ordering};
                 static ID_CNT: AtomicU16 = AtomicU16::new(0);
@@ -85,16 +95,32 @@ macro_rules! create_id_type_by_u16 {
     };
 }
 
+/// 从文件加载查询参数
+///
+/// # 参数
+/// * `path` - 查询参数文件路径
+///
+/// # 返回值
+/// 成功时返回QueryParams向量，失败时返回错误
+///
 pub fn load_query_param_from_file(path: &Path) -> Result<Vec<QueryParam<u32>>> {
     let data = fs::read_to_string(path)?;
     let query_params: Vec<QueryParam<u32>> = serde_json::from_str(&data)?;
     Ok(query_params)
 }
 
-// input format: block_id sep [ v_data ] sep { w_data }
-// sep = \t or space
-// v_data = v_1 comma v_2 ...
-// w_data = w_1 comma w_2 ...
+/// 从文件加载原始对象数据
+///
+/// 输入格式: block_id sep [ v_data ] sep { w_data }
+/// sep = \t 或空格
+/// v_data = v_1 comma v_2 ...
+/// w_data = w_1 comma w_2 ...
+///
+/// # 参数
+/// * `path` - 数据文件路径
+///
+/// # 返回值
+/// 按高度组织的对象集合，失败时返回错误
 pub fn load_raw_obj_from_file<K, ParseErr>(path: &Path) -> Result<BTreeMap<Height, Vec<Object<K>>>>
 where
     K: Num + FromStr<Err = ParseErr>,
@@ -106,6 +132,18 @@ where
     load_raw_obj_from_str(&buf)
 }
 
+/// 从字符串加载原始对象数据
+///
+/// 输入格式: block_id sep [ v_data ] sep { w_data }
+/// sep = \t 或空格
+/// v_data = v_1 comma v_2 ...
+/// w_data = w_1 comma w_2 ...
+///
+/// # 参数
+/// * `input` - 包含对象数据的字符串
+///
+/// # 返回值
+/// 按高度组织的对象集合，失败时返回错误
 pub fn load_raw_obj_from_str<K, ParseErr>(input: &str) -> Result<BTreeMap<Height, Vec<Object<K>>>>
 where
     K: Num + FromStr<Err = ParseErr>,
@@ -117,7 +155,10 @@ where
         if line.is_empty() {
             continue;
         }
+        // 按'['和']'分割字符串，最多分割3部分
         let mut split_str = line.splitn(3, |c| c == '[' || c == ']');
+
+        // 解析块高度
         let blk_height: Height = Height(
             split_str
                 .next()
@@ -125,6 +166,8 @@ where
                 .trim()
                 .parse()?,
         );
+
+        // 解析数值数据
         let v_data: Vec<K> = split_str
             .next()
             .with_context(|| format!("failed to parse line {}", line))?
@@ -134,6 +177,8 @@ where
             .filter(|s| !s.is_empty())
             .map(|s| s.parse::<K>().map_err(Error::from))
             .collect::<Result<_>>()?;
+
+        // 解析关键词数据
         let w_data: HashSet<String> = split_str
             .next()
             .with_context(|| format!("failed to parse line {}", line))?
@@ -151,13 +196,22 @@ where
     Ok(res)
 }
 
+/// 公私钥对结构体
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct KeyPair {
-    sk: AccSecretKey,
-    pub pk: AccPublicKey,
+    sk: AccSecretKey,     // 私钥
+    pub pk: AccPublicKey, // 公钥（公开）
 }
 
 impl KeyPair {
+    /// 生成新的密钥对
+    ///
+    /// # 参数
+    /// * `q` - 用于密钥生成的参数
+    /// * `rng` - 随机数生成器
+    ///
+    /// # 返回值
+    /// 新生成的KeyPair实例
     pub fn gen(q: u64, mut rng: impl RngCore + CryptoRng) -> Self {
         let sk = AccSecretKey::rand(&mut rng);
         let sk_with_pow = sk.into();
@@ -165,37 +219,60 @@ impl KeyPair {
         Self { sk, pk }
     }
 
+    /// 将密钥对保存到指定路径
+    ///
+    /// # 参数
+    /// * `path` - 保存路径
+    ///
+    /// # 返回值
+    /// 成功时返回Ok(())，失败时返回错误
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         ensure!(!path.exists(), "{} already exists.", path.display());
-        fs::create_dir_all(&path)?;
-        let sk_f = File::create(&Self::sk_path(path))?;
-        bincode::serialize_into(sk_f, &self.sk)?;
-        let pk_f = File::create(&Self::pk_path(path))?;
-        bincode::serialize_into(pk_f, &self.pk)?;
+        fs::create_dir_all(&path)?; // 创建目录
+        let sk_f = File::create(&Self::sk_path(path))?; // 创建私钥文件
+        bincode::serialize_into(sk_f, &self.sk)?; // 序列化私钥
+        let pk_f = File::create(&Self::pk_path(path))?; // 创建公钥文件
+        bincode::serialize_into(pk_f, &self.pk)?; // 序列化公钥
         Ok(())
     }
 
+    /// 从指定路径加载密钥对
+    ///
+    /// # 参数
+    /// * `path` - 加载路径
+    ///
+    /// # 返回值
+    /// 成功时返回KeyPair实例，失败时返回错误
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let sk_file = File::open(Self::sk_path(path))?;
+        let sk_file = File::open(Self::sk_path(path))?; // 打开私钥文件
         let sk_reader = BufReader::new(sk_file);
-        let sk: AccSecretKey = bincode::deserialize_from(sk_reader)?;
-        let pk_file = File::open(Self::pk_path(path))?;
-        let pk_data = unsafe { Mmap::map(&pk_file) }?;
-        let pk: AccPublicKey = bincode::deserialize(&pk_data[..])?;
+        let sk: AccSecretKey = bincode::deserialize_from(sk_reader)?; // 反序列化私钥
+        let pk_file = File::open(Self::pk_path(path))?; // 打开公钥文件
+        let pk_data = unsafe { Mmap::map(&pk_file) }?; // 使用内存映射读取公钥
+        let pk: AccPublicKey = bincode::deserialize(&pk_data[..])?; // 反序列化公钥
         Ok(Self { sk, pk })
     }
 
+    /// 获取私钥文件路径
     fn sk_path(path: &Path) -> PathBuf {
         path.join("sk")
     }
 
+    /// 获取公钥文件路径
     fn pk_path(path: &Path) -> PathBuf {
         path.join("pk")
     }
 }
 
+/// 初始化tracing日志订阅者
+///
+/// # 参数
+/// * `directives` - 日志过滤指令
+///
+/// # 返回值
+/// 成功时返回Ok(())，失败时返回错误
 pub fn init_tracing_subscriber(directives: &str) -> Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(directives));
     tracing_subscriber::fmt()
@@ -204,41 +281,58 @@ pub fn init_tracing_subscriber(directives: &str) -> Result<()> {
         .map_err(Error::msg)
 }
 
+/// 查询时间统计结构体
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueryTime {
-    pub(crate) stage1: Time,
-    pub(crate) stage2: Time,
-    pub(crate) stage3: Time,
-    pub(crate) stage4: Time,
-    pub(crate) total: Time,
+    pub(crate) stage1: Time, // 第一阶段耗时
+    pub(crate) stage2: Time, // 第二阶段耗时
+    pub(crate) stage3: Time, // 第三阶段耗时
+    pub(crate) stage4: Time, // 第四阶段耗时
+    pub(crate) total: Time,  // 总耗时
 }
 
+/// 时间统计结构体
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Time {
-    real: u64,
-    user: u64,
-    sys: u64,
+    real: u64, // 实际时间
+    user: u64, // 用户态时间
+    sys: u64,  // 系统态时间
 }
 
 impl From<ProcessDuration> for Time {
+    /// 从ProcessDuration转换为Time
     fn from(p_duration: ProcessDuration) -> Self {
         Self {
-            real: p_duration.real.as_micros() as u64,
-            user: p_duration.user.as_micros() as u64,
-            sys: p_duration.system.as_micros() as u64,
+            real: p_duration.real.as_micros() as u64,    // 转换为微秒
+            user: p_duration.user.as_micros() as u64,    // 转换为微秒
+            sys: p_duration.system.as_micros() as u64,   // 转换为微秒
         }
     }
 }
 
+/// 二进制编码函数
+///
+/// # 参数
+/// * `value` - 需要编码的值
+///
+/// # 返回值
+/// 编码后的字节数组，失败时返回错误
 pub fn binary_encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
-    let mut encoder = FrameEncoder::new(Vec::new());
-    bincode::serialize_into(&mut encoder, value).map_err(Error::msg)?;
-    Ok(encoder.into_inner()?)
+    let mut encoder = FrameEncoder::new(Vec::new()); // 创建压缩编码器
+    bincode::serialize_into(&mut encoder, value).map_err(Error::msg)?; // 序列化并压缩
+    Ok(encoder.into_inner()?) // 获取内部缓冲区
 }
 
+/// 二进制解码函数
+///
+/// # 参数
+/// * `bytes` - 需要解码的字节数组
+///
+/// # 返回值
+/// 解码后的值，失败时返回错误
 pub fn binary_decode<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T> {
-    let decoder = FrameDecoder::new(bytes);
-    bincode::deserialize_from(decoder).map_err(Error::msg)
+    let decoder = FrameDecoder::new(bytes); // 创建压缩解码器
+    bincode::deserialize_from(decoder).map_err(Error::msg) // 解压并反序列化
 }
 
 #[cfg(test)]
@@ -445,3 +539,7 @@ mod tests {
         assert_eq!(str_size, 72);
     }
 }
+
+
+
+
