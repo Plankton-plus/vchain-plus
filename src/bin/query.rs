@@ -42,6 +42,14 @@ struct Opt {
     result: PathBuf,
 }
 
+/// 主函数 - 执行查询和验证流程
+///
+/// 该函数初始化日志系统，解析命令行参数，加载查询参数，
+/// 然后对每个查询执行查询操作和验证操作，并将结果保存到文件
+///
+/// # Returns
+///
+/// * `Result<()>` - 执行成功返回Ok(()), 失败返回错误信息
 fn main() -> Result<()> {
     init_tracing_subscriber("query=info,vchain_plus::chain=off")?;
     //init_tracing_subscriber("info")?;
@@ -54,9 +62,13 @@ fn main() -> Result<()> {
     let res_path = opts.result;
     let pk = KeyPair::load(&opts.key_path)?.pk;
     let mut query_info = Vec::new();
+
+    // 创建线程池用于并行验证
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(verify_thread_num)
         .build()?;
+
+    // 遍历所有查询参数，依次执行查询和验证
     for (i, q) in query_params.into_iter().enumerate() {
         info!("Processing query {}...", i);
         let (results, res_dags, time) = query(opts.null_set, opts.egg_opt, &chain, q, &pk)?;
