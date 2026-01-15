@@ -1,3 +1,4 @@
+/// TrieNonLeaf结构体实现。
 use crate::{
     acc::{AccPublicKey, AccValue, Set},
     chain::trie_tree::{
@@ -14,16 +15,26 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TrieNonLeaf {
     pub(crate) nibble: String,
+    /// 子节点映射表。BTreeMap保证字符顺序。键为单个字符，值为子节点的证明结构。
     pub(crate) children: BTreeMap<char, Box<SubProof>>,
 }
 
 impl Digestible for TrieNonLeaf {
+    ///通过对路径前缀和所有子节点的证明哈希进行组合生成代表该非叶子节点完整性的唯一摘要。
     fn to_digest(&self) -> Digest {
         trie_non_leaf_proof_hash(&self.nibble.to_digest(), self.children.iter())
     }
 }
 
 impl TrieNonLeaf {
+    /// 通过路径前缀和子节点映射创建新的非叶子节点
+    ///
+    /// # 参数
+    /// - `nibble`: 当前节点的路径前缀字符串
+    /// - `children`: 子节点映射表，键为字符，值为子节点证明
+    ///
+    /// # 返回
+    /// - `TrieNonLeaf`: 新创建的非叶子节点实例
     pub(crate) fn from_hashes(nibble: &str, children: BTreeMap<char, Box<SubProof>>) -> Self {
         Self {
             nibble: nibble.to_string(),
@@ -55,6 +66,8 @@ impl TrieNonLeaf {
         }
     }
 
+    /// 移除所有子节点的节点ID
+    /// 递归遍历所有子节点，将节点ID设置为None。
     pub(crate) fn remove_node_id(&mut self) {
         let children = &mut self.children;
         for c in children.values_mut() {

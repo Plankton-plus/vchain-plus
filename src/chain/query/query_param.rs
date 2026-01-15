@@ -143,23 +143,22 @@ impl<K: Num> QueryParam<K> {
 }
 
 pub fn param_to_qp<K: Num, T: ReadInterface<K = K>>(
-    time_win: &TimeWin,
-    e_win_size: u16,
-    query_dag: &Graph<DagNode<K>, bool>,
-    chain: &T,
-    pk: &AccPublicKey,
-) -> Result<QueryPlan<K>> {
+    time_win: &TimeWin, // 时间窗口参数，指定查询的起始和结束区块
+    e_win_size: u16,//结束窗口大小残数
+    query_dag: &Graph<DagNode<K>, bool>, // 查询图
+    chain: &T,// 区块链接口的引用
+    pk: &AccPublicKey, // 累加器公钥引用
+) -> Result<QueryPlan<K>> { //返回QueryPlan类型的Result
     let end_blk_height = Height(time_win.get_end());
-    let mut dag_content = HashMap::<NodeIndex, QPNode<K>>::new();
-    let mut q_inputs = match toposort(&query_dag, None) {
+    let mut dag_content = HashMap::<NodeIndex, QPNode<K>>::new();//创建存储DAG节点内容的哈希映射
+    let mut q_inputs = match toposort(&query_dag, None) {  //对查询DAG进行拓扑排序
         Ok(v) => v,
         Err(_) => {
             bail!("Input query graph not valid")
         }
     };
-    q_inputs.reverse();
-    let mut trie_ctxes = HashMap::<Height, trie_tree::read::ReadContext<T>>::new();
-
+    q_inputs.reverse(); //反转排序结果，从叶子节点开始处理
+    let mut trie_ctxes = HashMap::<Height, trie_tree::read::ReadContext<T>>::new(); // 创建存储Trie树读取上下文的哈希映射
     for idx in &q_inputs {
         if let Some(node) = query_dag.node_weight(*idx) {
             match node {
@@ -167,18 +166,18 @@ pub fn param_to_qp<K: Num, T: ReadInterface<K = K>>(
                     let bplus_root = chain
                         .read_block_content(end_blk_height)?
                         .ads
-                        .read_bplus_root(e_win_size, n.dim)?;
-                    let (s, a, p) = bplus_tree::read::range_query(
+                        .read_bplus_root(e_win_size, n.dim)?;//读取指定维度的B+树根
+                    let (s, a, p) = bplus_tree::read::range_query( //执行B+树范围查询
                         chain,
                         bplus_root.bplus_tree_root_id,
                         n.range,
                         pk,
                     )?;
-                    let qp_range_node: QPRangeNode<K> = QPRangeNode {
+                    let qp_range_node: QPRangeNode<K> = QPRangeNode { //创建查询计划范围节点
                         blk_height: end_blk_height,
                         set: Some((s, a, p)),
                     };
-                    dag_content.insert(*idx, QPNode::Range(Box::new(qp_range_node)));
+                    dag_content.insert(*idx, QPNode::Range(Box::new(qp_range_node))); //将范围节点插入DAG内容映射
                 }
                 DagNode::Keyword(n) => {
                     let set;
@@ -197,7 +196,7 @@ pub fn param_to_qp<K: Num, T: ReadInterface<K = K>>(
                         let (s, a) = trie_ctx.query(&SmolStr::from(&n.keyword), pk)?;
                         set = s;
                         acc = a;
-                        trie_ctxes.insert(end_blk_height, trie_ctx);
+                        trie_ctxes.insert(end_blk_height, trie_ctx); //将上下文插入映射
                     }
                     let qp_keyword_node = QPKeywordNode {
                         blk_height: end_blk_height,

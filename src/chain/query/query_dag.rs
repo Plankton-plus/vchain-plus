@@ -328,56 +328,94 @@ fn query_dag_add_keyword_exp<K: Num>(
     Ok(keyword_root_idx)
 }
 
+/// 生成并行查询DAG（有向无环图）
+///
+/// 该函数根据查询内容构建一个表示查询计划的DAG，支持关键词查询和范围查询的组合
+///
+/// # 参数
+/// * `query_content` - 查询内容结构体，包含关键词表达式和范围条件
+///
+/// # 返回值
+/// * `Result<Graph<DagNode<K>, bool>>` - 成功时返回构建好的DAG图，失败时返回错误
 pub fn gen_parallel_query_dag<K: Num>(
     query_content: &QueryContent<K>,
 ) -> Result<Graph<DagNode<K>, bool>> {
+    // 获取关键词表达式的可选引用
     let keyword_exp_opt = query_content.keyword_exp.as_ref();
+    // 初始化空的DAG图，节点类型为DagNode<K>，边权重为bool
     let mut query_dag = Graph::<DagNode<K>, bool>::new();
+    // 初始化关键词子图的根节点索引
     let mut keyword_root_idx: NodeIndex = NodeIndex::default();
+    // 初始化范围查询子图的根节点索引
     let mut range_root_idx: NodeIndex = NodeIndex::default();
+    // 声明布尔变量标记是否存在关键词查询
     let has_keyword_query: bool;
+    // 声明布尔变量标记是否存在范围查询
     let has_range_query: bool;
 
+    // 检查是否有关键词表达式
     if let Some(keyword_exp) = keyword_exp_opt.as_ref() {
+        // 如果存在关键词表达式，设置标记为true
         has_keyword_query = true;
+        // 调用辅助函数添加关键词表达式到DAG中，并返回其根节点索引
         keyword_root_idx = query_dag_add_keyword_exp(keyword_exp, &mut query_dag)?;
     } else {
+        // 如果不存在关键词表达式，设置标记为false
         has_keyword_query = false;
     }
 
+    // 检查是否存在范围查询条件
     if !query_content.range.is_empty() {
+        // 设置范围查询标记为true
         has_range_query = true;
+        // 使用锁标记，用于控制多个范围查询之间的连接逻辑
         let mut range_lock = false;
+        // 遍历所有的范围查询条件，带索引
         for (i, r) in query_content.range.iter().enumerate() {
-            // add range
+            // 添加范围节点到DAG中，包括具体的范围值和维度编号
             let range_idx = query_dag.add_node(DagNode::Range(RangeNode {
                 range: *r,
                 dim: i as u8,
             }));
+            // 如果已锁定（即已有第一个范围节点），则需要将当前节点与之前的节点进行交集操作
             if range_lock {
-                // add intersec
+                // 添加交集节点用于连接两个范围查询
                 let intersec_idx = query_dag.add_node(DagNode::Intersec(IntersecNode {}));
+                // 添加边：交集节点 -> 第一个范围节点（true表示左侧）
                 query_dag.add_edge(intersec_idx, range_root_idx, true);
+                // 添加边：交集节点 -> 当前范围节点（false表示右侧）
                 query_dag.add_edge(intersec_idx, range_idx, false);
+                // 更新范围根节点为交集节点
                 range_root_idx = intersec_idx;
+                // 继续下一个循环迭代
                 continue;
             }
+            // 如果未锁定，将当前范围节点设为范围根节点
             range_root_idx = range_idx;
+            // 锁定范围处理状态
             range_lock = true;
         }
     } else {
+        // 如果没有范围查询，设置标记为false
         has_range_query = false;
     }
 
+    // 声明最终的根节点索引
     let root_idx;
+    // 如果同时存在关键词查询和范围查询，则需要将两者的结果进行交集操作
     if has_keyword_query && has_range_query {
+        // 添加交集节点作为整个查询的根节点
         root_idx = query_dag.add_node(DagNode::Intersec(IntersecNode {}));
+        // 添加边：根节点 -> 范围查询根节点（true表示左侧）
         query_dag.add_edge(root_idx, range_root_idx, true);
+        // 添加边：根节点 -> 关键词查询根节点（false表示右侧）
         query_dag.add_edge(root_idx, keyword_root_idx, false);
     }
 
+    // 返回构建完成的查询DAG
     Ok(query_dag)
 }
+
 
 #[allow(clippy::type_complexity)]
 pub fn gen_last_query_dag_with_cont_basic<K: Num, T: ReadInterface<K = K>>(
@@ -590,4 +628,33 @@ pub fn gen_last_query_dag_with_cont_basic<K: Num, T: ReadInterface<K = K>>(
     };
 
     Ok((query_dag, qp))
+}
+
+// 为 gen_parallel_query_dag 函数编写的测试代码
+#[cfg(test)]
+mod dag_tests {
+    use super::super::query_dag::{gen_parallel_query_dag};
+    use super::super::{ Node, Range};
+    use crate::chain::query::query_param::{NotNode, OrNode, QueryParam};
+    #[test]
+    fn test_gen_parallel_query_dag_with_not_operator() {
+        let query_param = QueryParam::<u32> {
+            start_blk: 1,
+            end_blk: 3,
+            range: vec![Range::<u32>::new(1, 5), Range::<u32>::new(2, 8)],
+            keyword_exp: Some(Node::Or(Box::new(OrNode(
+                Node::Input("a".to_string()),
+                Node::Not(Box::new(NotNode(Node::Input("b".to_string())))),
+            )))),
+        };
+        let query_content = query_param.gen_query_content();
+
+        println!("=== 测试 gen_parallel_query_dag 函数 ===");
+        println!("查询内容:");
+        println!("  范围查询: {:?}", query_content.range);
+        println!("  关键词表达式: {:?}", query_content.keyword_exp);
+        println!();
+        let result = gen_parallel_query_dag(&query_content);
+        assert!(result.is_ok(), "gen_parallel_query_dag 函数执行失败: {:?}", result.err());
+      }
 }

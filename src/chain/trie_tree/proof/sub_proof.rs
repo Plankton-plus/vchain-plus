@@ -1,3 +1,5 @@
+/// SubProof枚举是Trie树证明系统的核心组件，表示Trie树的各种子证明类型。
+/// 提供统一接口来处理哈希节点，叶子节点，非叶子节点和根节点证明
 use crate::{
     acc::{AccPublicKey, AccValue, Set},
     chain::trie_tree::{
@@ -11,6 +13,13 @@ use smol_str::SmolStr;
 
 use super::non_leaf_root::TrieNonLeafRoot;
 
+/// Trie树子证明枚举，表示Trie树的各种证明节点类型
+///
+/// 该枚举提供了统一的证明处理接口，支持四种证明节点类型：
+/// 1. Hash节点：压缩的哈希证明，表示未展开的子树
+/// 2. Leaf节点：叶子节点证明，包含具体的关键词和累加器
+/// 3. NonLeaf节点：普通非叶子节点证明，包含路径前缀和子节点
+/// 4. NonLeafRoot节点：根节点证明，额外包含累加器值
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum SubProof {
     Hash(Box<TrieSubTree>),
@@ -25,6 +34,7 @@ impl Default for SubProof {
     }
 }
 
+/// 计算子证明的密码学摘要
 impl Digestible for SubProof {
     fn to_digest(&self) -> Digest {
         match self {
@@ -37,6 +47,8 @@ impl Digestible for SubProof {
 }
 
 impl SubProof {
+
+    ///构造方法，从值创建节点证明
     pub(crate) fn from_hash(node_id: Option<TrieNodeId>, nibble: &str, node_hash: Digest) -> Self {
         Self::Hash(Box::new(TrieSubTree::new(node_id, nibble, node_hash)))
     }
@@ -53,6 +65,11 @@ impl SubProof {
         Self::Leaf(Box::new(l))
     }
 
+    /// 根据当前关键词最终返回匹配叶子节点的累加器哈希，而不是沿路所有节点的哈希
+    /// 目的是：验证某个关键词是否存在
+    /// 与路径完整性to_digest 相分离，所以返回的是acc_hash
+    /// 递归遍历子证明结构，根据关键词匹配结果返回相应的acc_hash,对哈希节点，总是返回空集合的累加器哈希表示未匹配
+    ///
     pub(crate) fn value_acc_hash(&self, cur_key: &str, pk: &AccPublicKey) -> Digest {
         match self {
             SubProof::Hash(_) => {
@@ -87,6 +104,7 @@ impl SubProof {
         }
     }
 
+    /// 移除所有嵌套节点的节点ID
     pub(crate) fn remove_node_id(&mut self) {
         match self {
             SubProof::Hash(n) => {
